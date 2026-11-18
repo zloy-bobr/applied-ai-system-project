@@ -102,11 +102,13 @@ class AgentResult:
 
 class RecommendationAgent:
     def __init__(self, songs: Optional[List[Dict[str, Any]]] = None, client: Any = "auto", k: int = 5,
-                 log_path: Optional[str] = "logs/agent_runs.jsonl", diversify: bool = True):
+                 log_path: Optional[str] = "logs/agent_runs.jsonl", diversify: bool = True,
+                 ai_explanations: bool = True):
         self.songs = songs if songs is not None else load_songs("data/songs.csv")
         self.vocab = CatalogVocab.from_songs(self.songs)
         self.client: Optional[LLMClient] = get_client() if client == "auto" else client
         self.k, self.log_path, self.diversify = k, log_path, diversify
+        self.ai_explanations = ai_explanations  # False skips the second model call (faster)
 
     @property
     def provider(self) -> str:
@@ -229,7 +231,7 @@ class RecommendationAgent:
         recs = result.recommendations
         explanations: Dict[str, str] = {}
         source = "template"
-        if self.client:
+        if self.client and self.ai_explanations:
             facts = "\n".join(
                 f"- {r.song['title']} by {r.song['artist']} ({r.song['genre']}, {r.song['mood']}, "
                 f"energy {r.song['energy']}, tags {', '.join(r.song.get('mood_tags', []))}): "

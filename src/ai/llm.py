@@ -90,19 +90,32 @@ class GeminiClient:
         if not key:
             raise LLMError("GEMINI_API_KEY is not set (add it to your .env file)")
         self._client = genai.Client(api_key=key)
+        # Gemini 3 models "think" before answering, which roughly doubles the wait for
+        # these small JSON tasks. Default to minimal thinking; GEMINI_THINKING=default turns it back on.
+        self.thinking = os.getenv("GEMINI_THINKING", "minimal").strip().lower()
+
+    def _generate(self, system: str, prompt: str) -> str:
+        config: Dict[str, Any] = {
+            "system_instruction": system,
+            "temperature": 0,
+            "response_mime_type": "application/json",
+        }
+        if self.thinking not in ("", "default"):
+            config["thinking_config"] = {"thinking_level": self.thinking}
+        reply = self._client.models.generate_content(model=self.model, contents=prompt, config=config)
+        return reply.text or ""
 
     def complete_json(self, system: str, prompt: str) -> Dict[str, Any]:
         try:
-            reply = self._client.models.generate_content(
-                model=self.model,
-                contents=prompt,
-                config={
-                    "system_instruction": system,
-                    "temperature": 0,
-                    "response_mime_type": "application/json",
-                },
-            )
-            text = reply.text or ""
+            try:
+                text = self._generate(system, prompt)
+            except Exception as exc:
+                if self.thinking in ("", "default") or "thinking" not in str(exc).lower():
+                    raise
+                # this model doesn't accept the thinking setting: drop it for this and later calls
+                print(f"[llm] {self.model} rejected thinking_level={self.thinking}; using the model default.")
+                self.thinking = "default"
+                text = self._generate(system, prompt)
         except Exception as exc:
             raise LLMError(f"Gemini request failed: {exc}") from exc
         return extract_json(text)

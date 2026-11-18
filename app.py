@@ -29,11 +29,15 @@ with st.sidebar:
     st.header("Settings")
     provider = st.selectbox("Language model", ["auto", "claude", "gemini", "offline"],
                             help="auto picks Claude or Gemini from your API keys, else offline.")
+    ai_explanations = st.checkbox("AI-written explanations", value=True,
+                                  help="Off = one model call instead of two, so about twice as fast. "
+                                       "Explanations then come straight from the scoring reasons.")
     show_trace = st.checkbox("Show agent reasoning steps", value=True)
     st.caption("The ranking itself always comes from the transparent Module 3 scoring rule. "
                "The AI only reads your request and writes the explanations.")
 
 agent = build_agent(provider)
+agent.ai_explanations = ai_explanations
 if provider not in ("auto", "offline") and agent.client is None:
     st.sidebar.warning(f"{provider} could not start (usually a missing or wrong API key in .env), "
                        "so the app is running offline. The terminal window shows the reason.")
@@ -55,7 +59,7 @@ request = st.text_input("Your request", key="request",
 clicked = st.button("Recommend", type="primary")
 # Streamlit reruns this whole script on every click; only call the agent (and the paid API)
 # when the request or model changed, or the user pressed Recommend again.
-key = (provider, request)
+key = (provider, ai_explanations, request)
 if request and (clicked or st.session_state.get("last_key") != key):
     with st.spinner("Thinking..."):
         st.session_state.last_key, st.session_state.last_result = key, agent.run(request)

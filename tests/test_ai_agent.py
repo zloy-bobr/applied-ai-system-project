@@ -297,3 +297,55 @@ def test_missing_api_key_falls_back_to_offline(monkeypatch):
     with pytest.raises(LLMError, match="ANTHROPIC_API_KEY"):
         llm.ClaudeClient()
     assert llm.get_client("claude") is None
+
+
+# --- speed settings ----------------------------------------------------------------------
+
+def _install_fake_genai(monkeypatch, reject_thinking=False):
+    import sys
+    import types
+
+    calls = []
+
+    def generate_content(model, contents, config):
+        calls.append(config)
+        if reject_thinking and "thinking_config" in config:
+            raise ValueError("400 INVALID_ARGUMENT: thinking_level is not supported for this model")
+        return types.SimpleNamespace(text='{"on_topic": true, "favorite_mood": "happy"}')
+
+    genai = types.ModuleType("google.genai")
+    genai.Client = lambda api_key=None: types.SimpleNamespace(
+        models=types.SimpleNamespace(generate_content=generate_content))
+    google = types.ModuleType("google")
+    google.genai = genai
+    monkeypatch.setitem(sys.modules, "google", google)
+    monkeypatch.setitem(sys.modules, "google.genai", genai)
+    monkeypatch.delenv("GEMINI_THINKING", raising=False)
+    return calls
+
+
+def test_gemini_uses_minimal_thinking_by_default(monkeypatch):
+    from src.ai.llm import GeminiClient
+
+    calls = _install_fake_genai(monkeypatch)
+    assert GeminiClient(api_key="k").complete_json("s", "p")["favorite_mood"] == "happy"
+    assert calls[0]["thinking_config"] == {"thinking_level": "minimal"}
+
+
+def test_gemini_drops_thinking_setting_if_model_rejects_it(monkeypatch):
+    from src.ai.llm import GeminiClient
+
+    calls = _install_fake_genai(monkeypatch, reject_thinking=True)
+    client = GeminiClient(api_key="k")
+    assert client.complete_json("s", "p")["favorite_mood"] == "happy"
+    client.complete_json("s", "p")
+    assert ["thinking_config" in c for c in calls] == [True, False, False]  # retried once, then remembered
+
+
+def test_fast_mode_makes_one_model_call_instead_of_two():
+    profile = {"on_topic": True, "favorite_genre": "pop", "favorite_mood": "happy"}
+    slow, fast = FakeLLM(profile, {}), FakeLLM(profile, {})
+    make_agent(slow).run("happy pop")
+    result = make_agent(fast, ai_explanations=False).run("happy pop")
+    assert len(slow.calls) == 2 and len(fast.calls) == 1
+    assert all(r.explanation for r in result.recommendations)

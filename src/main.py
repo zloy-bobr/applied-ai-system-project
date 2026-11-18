@@ -5,7 +5,7 @@ Command line runner.
     python -m src.main --ask "chill lofi for studying"   # one request through the AI agent
     python -m src.main --ask "..." --trace               # also show every agent step
     python -m src.main --profiles                        # original Module 3 demo (fixed profiles)
-    add --offline to ignore API keys and use the keyword parser
+    add --offline to ignore API keys and use the keyword parser, or --fast to skip AI explanations
 """
 import argparse
 
@@ -139,6 +139,7 @@ def main(argv=None) -> None:
     parser.add_argument("--ask", help="a plain-English music request")
     parser.add_argument("--trace", action="store_true", help="print each agent step")
     parser.add_argument("--offline", action="store_true", help="don't call an LLM")
+    parser.add_argument("--fast", action="store_true", help="one model call: skip AI-written explanations")
     parser.add_argument("--profiles", action="store_true", help="run the original Module 3 demo")
     args = parser.parse_args(argv)
 
@@ -148,7 +149,7 @@ def main(argv=None) -> None:
 
     from src.ai.agent import RecommendationAgent
 
-    agent = RecommendationAgent(client=None if args.offline else "auto")
+    agent = RecommendationAgent(client=None if args.offline else "auto", ai_explanations=not args.fast)
     if args.ask:
         print_agent_result(agent.run(args.ask), args.trace)
         return
