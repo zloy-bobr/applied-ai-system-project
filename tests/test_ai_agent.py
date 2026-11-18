@@ -247,3 +247,53 @@ def test_exact_label_is_never_remapped_by_a_synonym():
     from src.ai.parser import _find_label
     # "calm" is a synonym key (-> "peaceful"); if a catalog mood is literally "calm", keep it
     assert _find_label("something calm", ["calm"], {"calm": "peaceful"}) == ("calm", "calm")
+
+
+# --- Claude client against a fake SDK (the real one is not needed) ---------------------
+
+class _FakeMessages:
+    def __init__(self):
+        self.kwargs = None
+
+    def create(self, **kwargs):
+        self.kwargs = kwargs
+
+        class Block:
+            text = '{"on_topic": true, "favorite_genre": "pop"}'
+
+        class Reply:
+            content = [Block()]
+
+        return Reply()
+
+
+def _install_fake_anthropic(monkeypatch):
+    import sys
+    import types
+
+    messages = _FakeMessages()
+    module = types.ModuleType("anthropic")
+    module.Anthropic = lambda api_key=None: types.SimpleNamespace(messages=messages)
+    monkeypatch.setitem(sys.modules, "anthropic", module)
+    return messages
+
+
+def test_claude_client_sends_only_supported_arguments(monkeypatch):
+    from src.ai.llm import ClaudeClient
+
+    messages = _install_fake_anthropic(monkeypatch)
+    reply = ClaudeClient(api_key="test-key").complete_json("system", "prompt")
+    assert reply["favorite_genre"] == "pop"
+    # newer anthropic SDKs reject `temperature`; only send what every version accepts
+    assert set(messages.kwargs) == {"model", "max_tokens", "system", "messages"}
+
+
+def test_missing_api_key_falls_back_to_offline(monkeypatch):
+    from src.ai import llm
+
+    _install_fake_anthropic(monkeypatch)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setattr("dotenv.load_dotenv", lambda *a, **k: None)  # ignore any local .env
+    with pytest.raises(LLMError, match="ANTHROPIC_API_KEY"):
+        llm.ClaudeClient()
+    assert llm.get_client("claude") is None

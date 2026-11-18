@@ -55,16 +55,18 @@ class ClaudeClient:
             import anthropic
         except ImportError as exc:  # pragma: no cover - depends on local install
             raise LLMError("pip install anthropic to use Claude") from exc
+        key = api_key or os.getenv("ANTHROPIC_API_KEY")
+        if not key:
+            raise LLMError("ANTHROPIC_API_KEY is not set (add it to your .env file)")
         self.model = model or os.getenv("CLAUDE_MODEL", "claude-haiku-5-5")
         self.name = f"claude:{self.model}"
-        self._client = anthropic.Anthropic(api_key=api_key or os.getenv("ANTHROPIC_API_KEY"))
+        self._client = anthropic.Anthropic(api_key=key)
 
     def complete_json(self, system: str, prompt: str) -> Dict[str, Any]:
         try:
             reply = self._client.messages.create(
                 model=self.model,
                 max_tokens=1024,
-                temperature=0,
                 system=system,
                 messages=[{"role": "user", "content": prompt}],
             )
@@ -85,6 +87,8 @@ class GeminiClient:
         self.model = model or os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
         self.name = f"gemini:{self.model}"
         key = api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+        if not key:
+            raise LLMError("GEMINI_API_KEY is not set (add it to your .env file)")
         self._client = genai.Client(api_key=key)
 
     def complete_json(self, system: str, prompt: str) -> Dict[str, Any]:

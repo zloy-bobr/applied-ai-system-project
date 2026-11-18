@@ -34,6 +34,9 @@ with st.sidebar:
                "The AI only reads your request and writes the explanations.")
 
 agent = build_agent(provider)
+if provider not in ("auto", "offline") and agent.client is None:
+    st.sidebar.warning(f"{provider} could not start (usually a missing or wrong API key in .env), "
+                       "so the app is running offline. The terminal window shows the reason.")
 
 st.title("🎵 AI Music Recommender")
 st.caption(f"Describe what you want to hear. Model in use: `{agent.provider}`")
