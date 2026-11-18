@@ -17,3 +17,5 @@ venv/
 # Secrets and run logs
 .env
 logs/
+.env.*
+!.env.example
