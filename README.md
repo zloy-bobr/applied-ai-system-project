@@ -151,7 +151,7 @@ Here the self-check caught that *Midnight Coding* and *Focus Flow* are both by L
 
 ## Testing summary
 
-**35 / 40 pytest tests pass** (6 original Module 3 tests + 29 new, including 8 regression tests for bugs found in code review). A `FakeLLM` replays canned replies, including errors, so the tests cover the LLM path, retry, fallback, hallucination filtering, injection flagging and logging without network access.
+**40 / 40 pytest tests pass** (6 original Module 3 tests + 34 new, including regression tests for every bug found in code review and debugging). A `FakeLLM` replays canned replies, including errors, so the tests cover the LLM path, retry, fallback, hallucination filtering, injection flagging and logging without network access.
 
 **Evaluation harness** (`python -m src.evaluation.run_eval --offline`, full report in [`reports/evaluation_report.md`](reports/evaluation_report.md)):
 
