@@ -85,7 +85,6 @@ class GeminiClient:
         except ImportError as exc:  # pragma: no cover - depends on local install
             raise LLMError("pip install google-genai to use Gemini") from exc
         self.model = model or os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
-        self.name = f"gemini:{self.model}"
         key = api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
         if not key:
             raise LLMError("GEMINI_API_KEY is not set (add it to your .env file)")
@@ -93,6 +92,11 @@ class GeminiClient:
         # Gemini 3 models "think" before answering, which roughly doubles the wait for
         # these small JSON tasks. Default to minimal thinking; GEMINI_THINKING=default turns it back on.
         self.thinking = os.getenv("GEMINI_THINKING", "minimal").strip().lower()
+
+    @property
+    def name(self) -> str:  # shows the thinking level, so you can see the speed setting is on
+        thinking = "" if self.thinking in ("", "default") else f" (thinking: {self.thinking})"
+        return f"gemini:{self.model}{thinking}"
 
     def _generate(self, system: str, prompt: str) -> str:
         config: Dict[str, Any] = {

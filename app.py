@@ -20,9 +20,19 @@ st.set_page_config(page_title="AI Music Recommender", page_icon="🎵", layout="
 
 
 @st.cache_resource
-def build_agent(provider: str) -> RecommendationAgent:
+def build_agent(provider: str, ai_explanations: bool = True) -> RecommendationAgent:
     client = None if provider == "offline" else get_client(provider if provider != "auto" else None)
-    return RecommendationAgent(client=client)
+    return RecommendationAgent(client=client, ai_explanations=ai_explanations)
+
+
+@st.cache_data(ttl=3600, max_entries=200, show_spinner="Asking the AI...")
+def recommend(provider: str, ai_explanations: bool, request: str):
+    """
+    Run the agent once per (model, setting, request). Streamlit reruns the script on every
+    click, and starts a new run before the old one stops; this cache makes a duplicate submit
+    wait for the first answer instead of calling the model again, and repeats are instant.
+    """
+    return build_agent(provider, ai_explanations).run(request)
 
 
 with st.sidebar:
@@ -36,8 +46,7 @@ with st.sidebar:
     st.caption("The ranking itself always comes from the transparent Module 3 scoring rule. "
                "The AI only reads your request and writes the explanations.")
 
-agent = build_agent(provider)
-agent.ai_explanations = ai_explanations
+agent = build_agent(provider, ai_explanations)
 if provider not in ("auto", "offline") and agent.client is None:
     st.sidebar.warning(f"{provider} could not start (usually a missing or wrong API key in .env), "
                        "so the app is running offline. The terminal window shows the reason.")
@@ -56,14 +65,8 @@ for col, example in zip(cols, EXAMPLES):
 request = st.text_input("Your request", key="request",
                         placeholder="e.g. dreamy synthwave for a late night drive")
 
-clicked = st.button("Recommend", type="primary")
-# Streamlit reruns this whole script on every click; only call the agent (and the paid API)
-# when the request or model changed, or the user pressed Recommend again.
-key = (provider, ai_explanations, request)
-if request and (clicked or st.session_state.get("last_key") != key):
-    with st.spinner("Thinking..."):
-        st.session_state.last_key, st.session_state.last_result = key, agent.run(request)
-result = st.session_state.get("last_result") if request else None
+st.button("Recommend", type="primary")  # pressing Enter in the box works too
+result = recommend(provider, ai_explanations, request) if request else None
 
 if result:
     if result.clarification:
@@ -83,6 +86,9 @@ if result:
                     for reason in rec.reasons:
                         st.write(f"- {reason}")
         st.success(result.summary)
+        ai_seconds = {s["step"]: s["ms"] / 1000 for s in result.trace if s["step"] in ("plan", "explain") and "ms" in s}
+        st.caption("Time spent: " + ", ".join(f"{step} {sec:.1f} s" for step, sec in ai_seconds.items())
+                   + " (asking the same thing again is instant)")
 
     for warning in result.warnings:
         st.warning(warning)

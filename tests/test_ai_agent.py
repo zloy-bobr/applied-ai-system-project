@@ -349,3 +349,21 @@ def test_fast_mode_makes_one_model_call_instead_of_two():
     result = make_agent(fast, ai_explanations=False).run("happy pop")
     assert len(slow.calls) == 2 and len(fast.calls) == 1
     assert all(r.explanation for r in result.recommendations)
+
+
+def test_gemini_name_shows_thinking_level_and_updates_after_fallback(monkeypatch):
+    from src.ai.llm import GeminiClient
+
+    _install_fake_genai(monkeypatch, reject_thinking=True)
+    client = GeminiClient(api_key="k", model="gemini-test")
+    assert client.name == "gemini:gemini-test (thinking: minimal)"
+    client.complete_json("s", "p")
+    assert client.name == "gemini:gemini-test"
+
+
+def test_agent_result_survives_pickling():
+    # the Streamlit app caches results with st.cache_data, which pickles them
+    import pickle
+
+    result = make_agent().run("happy pop")
+    assert pickle.loads(pickle.dumps(result)).to_dict() == result.to_dict()
