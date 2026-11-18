@@ -273,7 +273,7 @@ def _install_fake_anthropic(monkeypatch):
 
     messages = _FakeMessages()
     module = types.ModuleType("anthropic")
-    module.Anthropic = lambda api_key=None: types.SimpleNamespace(messages=messages)
+    module.Anthropic = lambda api_key=None, **options: types.SimpleNamespace(messages=messages, options=options)
     monkeypatch.setitem(sys.modules, "anthropic", module)
     return messages
 
@@ -314,8 +314,8 @@ def _install_fake_genai(monkeypatch, reject_thinking=False):
         return types.SimpleNamespace(text='{"on_topic": true, "favorite_mood": "happy"}')
 
     genai = types.ModuleType("google.genai")
-    genai.Client = lambda api_key=None: types.SimpleNamespace(
-        models=types.SimpleNamespace(generate_content=generate_content))
+    genai.Client = lambda api_key=None, http_options=None: types.SimpleNamespace(
+        http_options=http_options, models=types.SimpleNamespace(generate_content=generate_content))
     google = types.ModuleType("google")
     google.genai = genai
     monkeypatch.setitem(sys.modules, "google", google)
@@ -367,3 +367,50 @@ def test_agent_result_survives_pickling():
 
     result = make_agent().run("happy pop")
     assert pickle.loads(pickle.dumps(result)).to_dict() == result.to_dict()
+
+
+# --- time limits ---------------------------------------------------------------------------
+
+def test_clients_set_a_time_limit(monkeypatch):
+    from src.ai.llm import ClaudeClient, GeminiClient
+
+    monkeypatch.setenv("LLM_TIMEOUT", "12")
+    _install_fake_anthropic(monkeypatch)
+    _install_fake_genai(monkeypatch)
+    claude = ClaudeClient(api_key="k")._client.options
+    assert claude == {"timeout": 12.0, "max_retries": 0}
+    assert GeminiClient(api_key="k")._client.http_options == {"timeout": 12000}
+
+
+def test_sdk_timeout_becomes_llm_timeout():
+    from src.ai.llm import LLMTimeout, _wrap
+
+    class ReadTimeout(Exception):
+        pass
+
+    assert isinstance(_wrap("Gemini", ReadTimeout("read")), LLMTimeout)
+    assert not isinstance(_wrap("Gemini", ValueError("400 bad request")), LLMTimeout)
+
+
+def test_timeout_is_not_retried_and_skips_explanations():
+    from src.ai.llm import LLMTimeout
+
+    llm = FakeLLM(LLMTimeout("Gemini did not answer within 25 s"), {"on_topic": True})
+    result = make_agent(llm).run("something heavy and aggressive for the gym")
+    assert len(llm.calls) == 1  # no retry, no explanation call
+    assert result.model_timed_out and len(result.recommendations) == 5
+    assert any("took too long" in w for w in result.warnings)
+
+
+def test_unexpected_error_is_reported_and_logged(tmp_path, monkeypatch):
+    import src.ai.agent as agent_module
+
+    def broken(*args, **kwargs):
+        raise KeyError("energy")
+
+    monkeypatch.setattr(agent_module, "recommend_songs", broken)
+    path = tmp_path / "runs.jsonl"
+    result = RecommendationAgent(SONGS, client=None, log_path=str(path)).run("happy pop")
+    assert result.clarification and not result.recommendations
+    assert any("KeyError" in w for w in result.warnings)
+    assert json.loads(path.read_text())["trace"][-1]["step"] == "error"

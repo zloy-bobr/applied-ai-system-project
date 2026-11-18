@@ -22,6 +22,26 @@ class LLMError(Exception):
     """The model call failed or returned something we couldn't use."""
 
 
+class LLMTimeout(LLMError):
+    """The model didn't answer within LLM_TIMEOUT seconds (retrying would only wait again)."""
+
+
+def llm_timeout() -> float:
+    """Seconds to wait for one model reply before giving up (env LLM_TIMEOUT, default 25)."""
+    try:
+        return max(1.0, float(os.getenv("LLM_TIMEOUT", "25")))
+    except ValueError:
+        return 25.0
+
+
+def _wrap(provider: str, exc: Exception) -> LLMError:
+    """Turn an SDK exception into LLMError, or LLMTimeout when it was a timeout."""
+    text = f"{type(exc).__name__} {exc}".lower()
+    if "timeout" in text or "timed out" in text or "deadline" in text:
+        return LLMTimeout(f"{provider} did not answer within {llm_timeout():.0f} s")
+    return LLMError(f"{provider} request failed: {exc}")
+
+
 class LLMClient(Protocol):
     name: str
 
@@ -60,7 +80,8 @@ class ClaudeClient:
             raise LLMError("ANTHROPIC_API_KEY is not set (add it to your .env file)")
         self.model = model or os.getenv("CLAUDE_MODEL", "claude-haiku-5-5")
         self.name = f"claude:{self.model}"
-        self._client = anthropic.Anthropic(api_key=key)
+        # SDK defaults are a 10-minute timeout and 2 retries; the agent has its own fallback
+        self._client = anthropic.Anthropic(api_key=key, timeout=llm_timeout(), max_retries=0)
 
     def complete_json(self, system: str, prompt: str) -> Dict[str, Any]:
         try:
@@ -70,8 +91,8 @@ class ClaudeClient:
                 system=system,
                 messages=[{"role": "user", "content": prompt}],
             )
-        except Exception as exc:  # network, auth, rate limit...
-            raise LLMError(f"Claude request failed: {exc}") from exc
+        except Exception as exc:  # network, auth, rate limit, timeout...
+            raise _wrap("Claude", exc) from exc
         text = "".join(getattr(block, "text", "") for block in reply.content)
         return extract_json(text)
 
@@ -88,7 +109,8 @@ class GeminiClient:
         key = api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
         if not key:
             raise LLMError("GEMINI_API_KEY is not set (add it to your .env file)")
-        self._client = genai.Client(api_key=key)
+        # the SDK has no timeout by default, so one stuck request could hang the app forever
+        self._client = genai.Client(api_key=key, http_options={"timeout": int(llm_timeout() * 1000)})
         # Gemini 3 models "think" before answering, which roughly doubles the wait for
         # these small JSON tasks. Default to minimal thinking; GEMINI_THINKING=default turns it back on.
         self.thinking = os.getenv("GEMINI_THINKING", "minimal").strip().lower()
@@ -121,7 +143,7 @@ class GeminiClient:
                 self.thinking = "default"
                 text = self._generate(system, prompt)
         except Exception as exc:
-            raise LLMError(f"Gemini request failed: {exc}") from exc
+            raise _wrap("Gemini", exc) from exc
         return extract_json(text)
 
 

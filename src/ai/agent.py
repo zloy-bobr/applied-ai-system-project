@@ -19,7 +19,7 @@ from src.ai.catalog import CatalogVocab
 from src.ai.guardrails import (
     INJECTION_WARNING, GuardrailError, check_explanations, check_request, sanitize_profile, to_bool,
 )
-from src.ai.llm import LLMClient, LLMError, get_client
+from src.ai.llm import LLMClient, LLMError, LLMTimeout, get_client
 from src.ai.logger import log_run
 from src.ai.parser import parse_offline, parse_with_llm
 from src.core.recommender import load_songs, recommend_songs
@@ -80,6 +80,7 @@ class AgentResult:
     warnings: List[str] = field(default_factory=list)
     clarification: Optional[str] = None  # set when we need more info instead of recommending
     blocked: bool = False
+    model_timed_out: bool = False  # set when the model didn't answer in time; skips the second call
     trace: List[Dict[str, Any]] = field(default_factory=list)
 
     def step(self, name: str, status: str, detail: Dict[str, Any], start: Optional[float] = None) -> None:
@@ -121,6 +122,11 @@ class RecommendationAgent:
         except GuardrailError as exc:
             result.blocked, result.clarification = True, str(exc)
             result.step("guard", "blocked", {"reason": str(exc)})
+        except Exception as exc:  # a bug or an unexpected SDK reply: report it and still log the run
+            result.recommendations, result.clarification = [], (
+                "Something went wrong while building recommendations. Please try again.")
+            result.warnings.append(f"Internal error: {type(exc).__name__}: {exc}")
+            result.step("error", type(exc).__name__, {"error": str(exc)})
         if self.log_path:
             log_run(result.to_dict(), self.log_path)
         return result
@@ -177,7 +183,13 @@ class RecommendationAgent:
                     return parse_with_llm(self.client, result.request, self.vocab), f"llm ({self.provider})"
                 except LLMError as exc:
                     result.step("plan", f"llm attempt {attempt} failed", {"error": str(exc)})
-            result.warnings.append("The AI model was unavailable, so a simpler keyword parser was used.")
+                    if isinstance(exc, LLMTimeout):  # retrying a timeout would just wait again
+                        result.model_timed_out = True
+                        break
+            result.warnings.append(
+                "The AI model took too long, so a simpler keyword parser was used."
+                if result.model_timed_out else
+                "The AI model was unavailable, so a simpler keyword parser was used.")
         return parse_offline(result.request, self.vocab), "offline keyword parser"
 
     def _self_check(self, candidates: List[Recommendation], result: AgentResult) -> Dict[str, Any]:
@@ -231,7 +243,7 @@ class RecommendationAgent:
         recs = result.recommendations
         explanations: Dict[str, str] = {}
         source = "template"
-        if self.client and self.ai_explanations:
+        if self.client and self.ai_explanations and not result.model_timed_out:
             facts = "\n".join(
                 f"- {r.song['title']} by {r.song['artist']} ({r.song['genre']}, {r.song['mood']}, "
                 f"energy {r.song['energy']}, tags {', '.join(r.song.get('mood_tags', []))}): "
