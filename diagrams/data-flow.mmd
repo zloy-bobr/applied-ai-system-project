@@ -1,0 +1,40 @@
+graph LR
+    Start["Start<br/>User Request"]
+
+    Start -->|User Profile + Context| Load["📂 Load Data<br/>Songs + Profiles"]
+
+    Load -->|Songs List| Agent["🤖 Agent Process"]
+    Load -->|User Preferences| Agent
+
+    Agent -->|1. Analyze| Plan["Planning Phase<br/>Extract preferences<br/>Identify constraints"]
+
+    Plan -->|2. Reason| Reason["Reasoning Phase<br/>Determine strategy<br/>Plan matching"]
+
+    Reason -->|3. Score| Score["Scoring Phase<br/>Evaluate each song<br/>Calculate scores"]
+
+    Score -->|Scored Songs| Base["Base Recommender<br/>Module 3 Algorithm"]
+
+    Base -->|Scored List| Rank["Ranking Phase<br/>Sort by score<br/>Select top N"]
+
+    Rank -->|Top Songs| Explain["Explanation Phase<br/>Generate reasons<br/>Create confidence"]
+
+    Explain -->|Final Results| Output["📱 Output<br/>Recommendations<br/>Reasoning Chain<br/>Scores"]
+
+    Output -->|Evaluate| Eval["✅ Evaluation<br/>Calculate metrics<br/>Detect bias<br/>Test reliability"]
+
+    Eval -->|Report| Report["📊 Report<br/>Accuracy metrics<br/>Bias analysis<br/>Edge cases"]
+
+    Report -->|End| End["✓ Complete"]
+
+    classDef input fill:#FF9800,stroke:#E65100,color:#fff
+    classDef process fill:#2196F3,stroke:#1565C0,color:#fff
+    classDef decision fill:#9C27B0,stroke:#6A1B9A,color:#fff
+    classDef output fill:#4CAF50,stroke:#2E7D32,color:#fff
+    classDef eval fill:#F44336,stroke:#C62828,color:#fff
+
+    class Start,Load input
+    class Plan,Reason,Score,Base,Rank,Explain process
+    class Agent decision
+    class Output output
+    class Eval,Report eval
+    class End output

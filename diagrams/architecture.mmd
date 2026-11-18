@@ -1,0 +1,75 @@
+graph TD
+    %% User Input
+    User["👤 User"]
+    Profile["👤 User Profile<br/>Genre, Mood, Energy"]
+    Context["📍 Context<br/>Time, Activity, Mood"]
+
+    %% Input Processing
+    User -->|Provides Preferences| Profile
+    User -->|Current Situation| Context
+
+    %% Main Agent
+    Agent["🤖 Recommendation Agent<br/>Multi-Step Reasoning Engine"]
+    Profile -->|Load| Agent
+    Context -->|Analyze| Agent
+
+    %% Agent Steps
+    Planning["📋 PLANNING<br/>Understand Request"]
+    Reasoning["🧠 REASONING<br/>Analyze Matches"]
+    Scoring["📊 SCORING<br/>Evaluate Songs"]
+    Ranking["🏆 RANKING<br/>Order Results"]
+    Explaining["💬 EXPLAINING<br/>Generate Explanations"]
+
+    Agent -->|Step 1| Planning
+    Planning -->|Step 2| Reasoning
+    Reasoning -->|Step 3| Scoring
+    Scoring -->|Step 4| Ranking
+    Ranking -->|Step 5| Explaining
+
+    %% Core Components
+    BaseScorer["🎵 Base Recommender<br/>Module 3 - Weighted Scoring<br/>Genre + Mood + Energy + ..."]
+    Songs["🎶 Song Database<br/>18 Songs with Features"]
+
+    Scoring -->|Uses| BaseScorer
+    BaseScorer -->|Scores| Songs
+
+    %% Output
+    Recommendations["🎵 Recommendations<br/>Top 5 Songs"]
+    ReasoningChain["📝 Reasoning Chain<br/>Step-by-step Explanation"]
+    Confidence["📈 Confidence Scores<br/>0-100% per Song"]
+    Trace["📊 Execution Trace<br/>Debug Info"]
+
+    Explaining -->|Generate| Recommendations
+    Explaining -->|Generate| ReasoningChain
+    Explaining -->|Calculate| Confidence
+    Explaining -->|Generate| Trace
+
+    %% Evaluation System
+    Evaluation["✅ Evaluation System"]
+    Metrics["📊 Metrics<br/>Precision, Recall<br/>Diversity, NDCG"]
+    BiasDetector["⚖️ Bias Detector<br/>Genre Bias<br/>Artist Bias<br/>Popularity Bias"]
+    ReliabilityTester["🧪 Reliability Tests<br/>Edge Cases<br/>Robustness<br/>Consistency"]
+
+    Recommendations -->|Evaluate| Evaluation
+    Evaluation -->|Calculate| Metrics
+    Evaluation -->|Analyze| BiasDetector
+    Evaluation -->|Test| ReliabilityTester
+
+    %% Output Display
+    Output["📱 User Interface<br/>Recommendations + Explanations"]
+    Recommendations -->|Display| Output
+    ReasoningChain -->|Display| Output
+    Confidence -->|Display| Output
+
+    %% Styling
+    classDef agent fill:#4CAF50,stroke:#2E7D32,color:#fff,stroke-width:3px
+    classDef component fill:#2196F3,stroke:#1565C0,color:#fff,stroke-width:2px
+    classDef data fill:#FF9800,stroke:#E65100,color:#fff,stroke-width:2px
+    classDef evaluation fill:#9C27B0,stroke:#6A1B9A,color:#fff,stroke-width:2px
+    classDef output fill:#F44336,stroke:#C62828,color:#fff,stroke-width:2px
+
+    class Agent agent
+    class Planning,Reasoning,Scoring,Ranking,Explaining component
+    class BaseScorer,Songs data
+    class Metrics,BiasDetector,ReliabilityTester,Evaluation evaluation
+    class Output,Recommendations,ReasoningChain,Confidence,Trace output
