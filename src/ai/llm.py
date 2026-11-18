@@ -98,9 +98,10 @@ class GeminiClient:
                     "response_mime_type": "application/json",
                 },
             )
+            text = reply.text or ""
         except Exception as exc:
             raise LLMError(f"Gemini request failed: {exc}") from exc
-        return extract_json(reply.text or "")
+        return extract_json(text)
 
 
 def get_client(provider: Optional[str] = None) -> Optional[LLMClient]:
@@ -125,11 +126,13 @@ def get_client(provider: Optional[str] = None) -> Optional[LLMClient]:
         else:
             choice = "offline"
 
+    providers = {"claude": ClaudeClient, "gemini": GeminiClient}
+    if choice not in providers:
+        if choice != "offline":
+            print(f"[llm] unknown LLM_PROVIDER '{choice}'; running in offline mode.")
+        return None
     try:
-        if choice == "claude":
-            return ClaudeClient()
-        if choice == "gemini":
-            return GeminiClient()
-    except LLMError as exc:
-        print(f"[llm] {exc}; running in offline mode instead.")
-    return None
+        return providers[choice]()
+    except Exception as exc:  # missing package, missing/invalid key, SDK init errors
+        print(f"[llm] {choice} unavailable ({exc}); running in offline mode instead.")
+        return None

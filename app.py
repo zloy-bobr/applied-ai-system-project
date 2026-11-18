@@ -49,37 +49,42 @@ for col, example in zip(cols, EXAMPLES):
 request = st.text_input("Your request", key="request",
                         placeholder="e.g. dreamy synthwave for a late night drive")
 
-if st.button("Recommend", type="primary") or request:
-    if request:
-        with st.spinner("Thinking..."):
-            result = agent.run(request)
+clicked = st.button("Recommend", type="primary")
+# Streamlit reruns this whole script on every click; only call the agent (and the paid API)
+# when the request or model changed, or the user pressed Recommend again.
+key = (provider, request)
+if request and (clicked or st.session_state.get("last_key") != key):
+    with st.spinner("Thinking..."):
+        st.session_state.last_key, st.session_state.last_result = key, agent.run(request)
+result = st.session_state.get("last_result") if request else None
 
-        if result.clarification:
-            st.info(result.clarification)
-        else:
-            if result.interpretation:
-                st.write(f"**Understood as:** {result.interpretation}")
-            st.metric("Overall match confidence", f"{result.confidence:.0%}")
-            for rank, rec in enumerate(result.recommendations, start=1):
-                song = rec.song
-                with st.container(border=True):
-                    st.markdown(f"**{rank}. {song['title']}** — {song['artist']}  \n"
-                                f"`{song['genre']}` · `{song['mood']}` · energy {song['energy']}")
-                    st.progress(rec.confidence, text=f"match {rec.confidence:.0%}")
-                    st.write(rec.explanation)
-                    with st.expander("Scoring details"):
-                        for reason in rec.reasons:
-                            st.write(f"- {reason}")
-            st.success(result.summary)
+if result:
+    if result.clarification:
+        st.info(result.clarification)
+    else:
+        if result.interpretation:
+            st.write(f"**Understood as:** {result.interpretation}")
+        st.metric("Overall match confidence", f"{result.confidence:.0%}")
+        for rank, rec in enumerate(result.recommendations, start=1):
+            song = rec.song
+            with st.container(border=True):
+                st.markdown(f"**{rank}. {song['title']}** — {song['artist']}  \n"
+                            f"`{song['genre']}` · `{song['mood']}` · energy {song['energy']}")
+                st.progress(rec.confidence, text=f"match {rec.confidence:.0%}")
+                st.write(rec.explanation)
+                with st.expander("Scoring details"):
+                    for reason in rec.reasons:
+                        st.write(f"- {reason}")
+        st.success(result.summary)
 
-        for warning in result.warnings:
-            st.warning(warning)
+    for warning in result.warnings:
+        st.warning(warning)
 
-        if show_trace:
-            with st.expander("Agent trace (each step the agent took)"):
-                for step in result.trace:
-                    ms = f" · {step['ms']} ms" if "ms" in step else ""
-                    st.markdown(f"**{step['step']}** — {step['status']}{ms}")
-                    st.json(step["detail"], expanded=False)
-            with st.expander("Profile sent to the scorer"):
-                st.json(result.profile)
+    if show_trace:
+        with st.expander("Agent trace (each step the agent took)"):
+            for step in result.trace:
+                ms = f" · {step['ms']} ms" if "ms" in step else ""
+                st.markdown(f"**{step['step']}** — {step['status']}{ms}")
+                st.json(step["detail"], expanded=False)
+        with st.expander("Profile sent to the scorer"):
+            st.json(result.profile)

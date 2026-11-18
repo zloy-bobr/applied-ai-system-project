@@ -5,7 +5,7 @@ The agent shows this vocabulary to the language model (so it can only pick label
 exist) and the guardrails use it to throw away anything the model invents. This is the
 "retrieval" part of the system: the model's choices are grounded in the real data.
 """
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Dict, List, Optional
 
 
@@ -72,6 +72,13 @@ MOOD_SYNONYMS: Dict[str, str] = {
 }
 
 
+def _lookup(value: Optional[str], labels: List[str], synonyms: Dict[str, str]) -> Optional[str]:
+    """Return the catalog label for value (directly or via a synonym), else None."""
+    text = str(value or "").strip().lower()
+    text = text if text in labels else synonyms.get(text)
+    return text if text in labels else None
+
+
 @dataclass
 class CatalogVocab:
     """The exact labels found in the song catalog."""
@@ -80,42 +87,25 @@ class CatalogVocab:
     mood_tags: List[str]
     decades: List[int]
     languages: List[str]
-    titles: List[str] = field(default_factory=list)
 
     @classmethod
     def from_songs(cls, songs: List[Dict]) -> "CatalogVocab":
-        tags = sorted({tag for song in songs for tag in song.get("mood_tags", [])})
+        def labels(key):
+            return sorted({str(song[key]).lower() for song in songs})
+
         return cls(
-            genres=sorted({song["genre"].lower() for song in songs}),
-            moods=sorted({song["mood"].lower() for song in songs}),
-            mood_tags=tags,
+            genres=labels("genre"),
+            moods=labels("mood"),
+            mood_tags=sorted({tag for song in songs for tag in song.get("mood_tags", [])}),
             decades=sorted({int(song["release_decade"]) for song in songs}),
-            languages=sorted({song["language"].lower() for song in songs}),
-            titles=[song["title"] for song in songs],
+            languages=labels("language"),
         )
 
     def match_genre(self, value: Optional[str]) -> Optional[str]:
-        """Map a free-text genre onto a catalog genre, or None if it isn't in the catalog."""
-        text = (value or "").strip().lower()
-        if not text:
-            return None
-        if text in self.genres:
-            return text
-        mapped = GENRE_SYNONYMS.get(text)
-        if mapped in self.genres:
-            return mapped
-        return None
+        return _lookup(value, self.genres, GENRE_SYNONYMS)
 
     def match_mood(self, value: Optional[str]) -> Optional[str]:
-        text = (value or "").strip().lower()
-        if not text:
-            return None
-        if text in self.moods:
-            return text
-        mapped = MOOD_SYNONYMS.get(text)
-        if mapped in self.moods:
-            return mapped
-        return None
+        return _lookup(value, self.moods, MOOD_SYNONYMS)
 
     def as_prompt_text(self) -> str:
         """Compact description of the catalog for the language model."""
@@ -123,6 +113,6 @@ class CatalogVocab:
             f"genres: {', '.join(self.genres)}\n"
             f"moods: {', '.join(self.moods)}\n"
             f"mood_tags: {', '.join(self.mood_tags)}\n"
-            f"release decades: {', '.join(str(d) for d in self.decades)}\n"
+            f"release decades: {', '.join(map(str, self.decades))}\n"
             f"languages: {', '.join(self.languages)}"
         )

@@ -1,70 +1,53 @@
 """
 Guardrails around the language model.
 
-1. check_request()   - before the model sees anything: empty, too long, prompt-injection.
-2. sanitize_profile() - after the model answers: keep only known fields, map labels onto
-                        the real catalog, clamp numbers into range. Whatever the model says,
-                        only a valid profile ever reaches the Module 3 scorer.
+1. check_request()      - before the model sees anything: empty, too long, prompt injection.
+2. sanitize_profile()   - after the model answers: keep only known fields, map labels onto
+                          the real catalog, clamp numbers. Only a valid profile reaches the scorer.
 3. check_explanations() - the model's explanations may only talk about songs we recommended.
 """
 import re
-from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
 from src.ai.catalog import CatalogVocab
 
 MAX_REQUEST_CHARS = 500
-
-INJECTION_PATTERNS = [
-    r"ignore (all |any )?(the )?(previous|prior|above) (instructions|prompts?)",
-    r"disregard (all |the )?(previous|prior|above)",
-    r"system prompt",
-    r"you are now",
-    r"pretend (to be|you are)",
-    r"reveal your",
-    r"api[_ ]?key",
-]
+INJECTION_WARNING = ("Your request contained instructions aimed at the AI. They were ignored; "
+                     "only music preferences are used.")
+INJECTION = re.compile(
+    r"ignore (all |any )?(the )?(previous|prior|above) (instructions|prompts?)"
+    r"|disregard (all |the )?(previous|prior|above)|system prompt|you are now"
+    r"|pretend (to be|you are)|reveal your|api[_ ]?key"
+)
+NUMERIC_RANGES = {"target_energy": (0, 1), "target_valence": (0, 1),
+                  "target_instrumentalness": (0, 1), "target_popularity": (0, 100)}
+ALLOWED_FIELDS = {*NUMERIC_RANGES, "favorite_genre", "favorite_mood", "likes_acoustic",
+                  "desired_mood_tags", "favorite_decade", "preferred_language"}
+META_FIELDS = {"on_topic", "interpretation", "unavailable"}
 
 
 class GuardrailError(ValueError):
     """The request can't be processed safely."""
 
 
-@dataclass
-class RequestCheck:
-    text: str
-    warnings: List[str] = field(default_factory=list)
-    injection_suspected: bool = False
-
-
-def check_request(text: Any) -> RequestCheck:
-    """Validate the raw user text. Raises GuardrailError for requests we refuse outright."""
+def check_request(text: Any) -> Tuple[str, bool]:
+    """Return (cleaned text, injection suspected). Raises GuardrailError for refused input."""
     if not isinstance(text, str):
         raise GuardrailError("Request must be text.")
     cleaned = " ".join(text.split())  # collapse whitespace and newlines
     if not cleaned:
         raise GuardrailError("Please describe the music you want, e.g. 'chill songs for studying'.")
     if len(cleaned) > MAX_REQUEST_CHARS:
-        raise GuardrailError(
-            f"Request is {len(cleaned)} characters; please keep it under {MAX_REQUEST_CHARS}."
-        )
-
-    result = RequestCheck(text=cleaned)
-    lowered = cleaned.lower()
-    if any(re.search(pattern, lowered) for pattern in INJECTION_PATTERNS):
-        result.injection_suspected = True
-        result.warnings.append(
-            "Your request contained instructions aimed at the AI. They were ignored; "
-            "only music preferences are used."
-        )
-    return result
+        raise GuardrailError(f"Request is {len(cleaned)} characters; please keep it under {MAX_REQUEST_CHARS}.")
+    return cleaned, bool(INJECTION.search(cleaned.lower()))
 
 
-ALLOWED_FIELDS = {
-    "favorite_genre", "favorite_mood", "target_energy", "likes_acoustic", "target_valence",
-    "desired_mood_tags", "favorite_decade", "target_popularity", "target_instrumentalness",
-    "preferred_language",
-}
+def to_bool(value: Any) -> Optional[bool]:
+    """True/False for real booleans and yes/no strings; None if unclear."""
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    return True if text in ("true", "yes", "1") else False if text in ("false", "no", "0") else None
 
 
 def _clamp(value: Any, low: float, high: float) -> Optional[float]:
@@ -72,102 +55,68 @@ def _clamp(value: Any, low: float, high: float) -> Optional[float]:
         number = float(value)
     except (TypeError, ValueError):
         return None
-    if number != number:  # NaN
+    return None if number != number else round(min(high, max(low, number)), 2)  # NaN -> None
+
+
+def _decade(value: Any) -> Optional[int]:
+    """1985 -> 1980, "80" -> 1980, "10" -> 2010; None if not a plausible decade."""
+    try:
+        year = int(float(value))
+    except (TypeError, ValueError):
         return None
-    return round(min(high, max(low, number)), 2)
-
-
-def _to_bool(value: Any) -> Optional[bool]:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str) and value.strip().lower() in ("true", "yes", "1"):
-        return True
-    if isinstance(value, str) and value.strip().lower() in ("false", "no", "0"):
-        return False
-    return None
+    if 0 <= year < 100:
+        year += 1900 if year >= 30 else 2000
+    year = year // 10 * 10
+    return year if 1900 <= year <= 2030 else None
 
 
 def sanitize_profile(raw: Dict[str, Any], vocab: CatalogVocab) -> Tuple[Dict[str, Any], List[str]]:
-    """
-    Turn whatever the parser produced into a profile the scorer can trust.
-    Returns (profile, notes) where notes explain anything dropped or changed.
-    """
-    notes: List[str] = []
-    profile: Dict[str, Any] = {}
+    """Turn the parser's output into a profile the scorer can trust. Returns (profile, notes)."""
     raw = raw if isinstance(raw, dict) else {}
+    profile: Dict[str, Any] = {}
+    notes: List[str] = []
 
-    unknown = sorted(set(raw) - ALLOWED_FIELDS - {"on_topic", "interpretation", "unavailable"})
+    unknown = sorted(set(raw) - ALLOWED_FIELDS - META_FIELDS)
     if unknown:
         notes.append(f"Ignored unexpected fields from the model: {', '.join(unknown)}.")
 
     if raw.get("favorite_genre"):
-        genre = vocab.match_genre(str(raw["favorite_genre"]))
-        if genre:
-            profile["favorite_genre"] = genre
-        else:
-            notes.append(
-                f"The catalog has no '{raw['favorite_genre']}' songs, so genre was left open."
-            )
-
+        profile["favorite_genre"] = vocab.match_genre(raw["favorite_genre"])
+        if not profile["favorite_genre"]:
+            notes.append(f"The catalog has no '{raw['favorite_genre']}' songs, so genre was left open.")
     if raw.get("favorite_mood"):
-        mood = vocab.match_mood(str(raw["favorite_mood"]))
-        if mood:
-            profile["favorite_mood"] = mood
-        else:
+        profile["favorite_mood"] = vocab.match_mood(raw["favorite_mood"])
+        if not profile["favorite_mood"]:
             notes.append(f"No songs are labeled '{raw['favorite_mood']}'; mood was left open.")
 
-    for key in ("target_energy", "target_valence", "target_instrumentalness"):
-        if raw.get(key) is not None:
-            value = _clamp(raw[key], 0.0, 1.0)
-            if value is not None:
-                profile[key] = value
+    for key, (low, high) in NUMERIC_RANGES.items():
+        profile[key] = _clamp(raw.get(key), low, high)
+    if profile["target_popularity"] is not None:
+        profile["target_popularity"] = int(profile["target_popularity"])
 
-    if raw.get("target_popularity") is not None:
-        value = _clamp(raw["target_popularity"], 0, 100)
-        if value is not None:
-            profile["target_popularity"] = int(value)
-
-    if raw.get("likes_acoustic") is not None:
-        value = _to_bool(raw["likes_acoustic"])
-        if value is not None:
-            profile["likes_acoustic"] = value
+    profile["likes_acoustic"] = None if raw.get("likes_acoustic") is None else to_bool(raw["likes_acoustic"])
+    profile["favorite_decade"] = _decade(raw.get("favorite_decade"))
 
     tags = raw.get("desired_mood_tags") or []
-    if isinstance(tags, str):
-        tags = re.split(r"[;,]", tags)
-    kept = []
-    for tag in tags if isinstance(tags, list) else []:
-        tag = str(tag).strip().lower()
-        if tag in vocab.mood_tags and tag not in kept:
-            kept.append(tag)
-    if kept:
-        profile["desired_mood_tags"] = kept[:4]
+    tags = re.split(r"[;,]", tags) if isinstance(tags, str) else tags if isinstance(tags, list) else []
+    tags = [str(tag).strip().lower() for tag in tags]
+    profile["desired_mood_tags"] = list(dict.fromkeys(t for t in tags if t in vocab.mood_tags))[:4]
 
-    if raw.get("favorite_decade") is not None:
-        try:
-            decade = int(float(raw["favorite_decade"])) // 10 * 10
-            if decade < 100:  # "80" -> 1980, "10" -> 2010
-                decade += 1900 if decade >= 30 else 2000
-            if 1900 <= decade <= 2030:
-                profile["favorite_decade"] = decade
-        except (TypeError, ValueError):
-            pass
+    language = str(raw.get("preferred_language") or "").strip().lower()
+    if language in vocab.languages and language != "instrumental":
+        profile["preferred_language"] = language
+    elif language not in ("", "any", "none"):
+        notes.append(f"No songs in '{language}' in the catalog; language was left open.")
 
-    if raw.get("preferred_language"):
-        language = str(raw["preferred_language"]).strip().lower()
-        if language in vocab.languages and language != "instrumental":
-            profile["preferred_language"] = language
-        elif language not in ("", "any", "none"):
-            notes.append(f"No songs in '{language}' in the catalog; language was left open.")
+    unavailable = raw.get("unavailable") or []
+    for item in [unavailable] if isinstance(unavailable, str) else unavailable if isinstance(unavailable, list) else []:
+        notes.append(f"Not in this catalog: {item}.")
 
-    return profile, notes
+    return {key: value for key, value in profile.items() if value not in (None, [])}, notes
 
 
 def check_explanations(explanations: Any, allowed_titles: List[str], max_chars: int = 300) -> Dict[str, str]:
-    """
-    Keep only explanations for songs we actually recommended, and trim long ones.
-    Anything the model wrote about other songs (a hallucination) is dropped.
-    """
+    """Keep explanations only for songs we recommended (drops hallucinations); trim long ones."""
     if not isinstance(explanations, dict):
         return {}
     by_lower = {title.lower(): title for title in allowed_titles}

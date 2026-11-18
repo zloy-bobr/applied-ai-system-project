@@ -15,7 +15,6 @@ from statistics import mean
 from typing import Dict, List
 
 from src.ai.agent import RecommendationAgent
-from src.ai.guardrails import MAX_REQUEST_CHARS
 from src.core.recommender import load_songs
 from src.evaluation.metrics import bias_report, diversity, hit_at_1, ndcg_at_k, precision_at_k, recall_at_k
 
@@ -48,31 +47,28 @@ def run_ranking(agent: RecommendationAgent, cases: List[Dict], songs: List[Dict]
     return rows, lists
 
 
+CHECKS = {
+    "blocked": lambda r, k: r.blocked,
+    "clarification": lambda r, k: bool(r.clarification) and not r.recommendations,
+    "warning": lambda r, k: True,  # only the warning_contains check below matters
+    "recommendations": lambda r, k: len(r.recommendations) == k,
+}
+
+
 def run_reliability(agent: RecommendationAgent, cases: List[Dict]):
     rows = []
     for case in cases:
-        request = "chill songs " * 60 if case["request"] == "LONG" else case["request"]
-        result = agent.run(request)
-        expect = case["expect"]
-        if expect == "blocked":
-            ok = result.blocked
-        elif expect == "clarification":
-            ok = bool(result.clarification) and not result.recommendations
-        elif expect == "warning":
-            ok = True
-        else:  # recommendations
-            ok = len(result.recommendations) == agent.k
+        result = agent.run("chill songs " * 60 if case["request"] == "LONG" else case["request"])
+        ok = CHECKS[case["expect"]](result, agent.k)
         if case.get("warning_contains"):
             ok = ok and any(case["warning_contains"].lower() in w.lower() for w in result.warnings)
         if case.get("top_genre"):
-            ok = ok and result.recommendations and result.recommendations[0].song["genre"] == case["top_genre"]
-        outcome = ("blocked" if result.blocked else "clarified" if result.clarification
-                   else f"{len(result.recommendations)} recs")
-        rows.append({"name": case["name"], "expect": expect, "got": outcome, "pass": bool(ok)})
+            ok = ok and bool(result.recommendations) and result.recommendations[0].song["genre"] == case["top_genre"]
+        got = "blocked" if result.blocked else "clarified" if result.clarification else f"{len(result.recommendations)} recs"
+        rows.append({"name": case["name"], "expect": case["expect"], "got": got, "pass": bool(ok)})
 
-    # Consistency: same request twice -> same list
-    first = [r.song["id"] for r in agent.run("chill lofi beats to study to").recommendations]
-    second = [r.song["id"] for r in agent.run("chill lofi beats to study to").recommendations]
+    # Consistency: the same request twice gives the same list
+    first, second = ([r.song["id"] for r in agent.run("chill lofi beats to study to").recommendations] for _ in range(2))
     rows.append({"name": "consistency (same request twice)", "expect": "identical",
                  "got": "identical" if first == second else "different", "pass": first == second})
     return rows
@@ -110,6 +106,8 @@ def format_report(provider: str, ranking: List[Dict], reliability: List[Dict], b
     for row in reliability:
         lines.append(f"| {row['name']} | {row['expect']} | {row['got']} | {'✅' if row['pass'] else '❌'} |")
 
+    if not bias:
+        return "\n".join(lines + ["", "## Bias check\n", "No recommendations to analyze."]) + "\n"
     lines += ["", "## Bias check (across all labeled requests)\n",
               f"- Catalog coverage: {bias['catalog_coverage']:.0%} of songs were recommended at least once",
               f"- Never recommended: {', '.join(bias['never_recommended']) or 'none'}",

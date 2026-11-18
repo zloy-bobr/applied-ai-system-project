@@ -46,3 +46,22 @@ The project needed to work with Claude, with Gemini (free tier), and with no API
 - `src/ai/llm.py`: the `LLMClient` protocol, `ClaudeClient`, `GeminiClient`, and `get_client()` (returns `None` for offline mode).
 - `src/ai/agent.py`: `RecommendationAgent` receives any client and only calls `complete_json()`.
 - `tests/test_ai_agent.py`: `FakeLLM` is a fourth strategy used only in tests, which is what makes the LLM path testable without a network.
+
+---
+
+## Code review pass (SF8, continued)
+
+**Prompt:** "Check the code for possible bugs or logic errors, then try to shorten the code to make it less complex and have the same functionality and check the new modified code for possible bugs or logic errors."
+
+**Bugs found and fixed** (1–8 have regression tests in `tests/test_ai_agent.py`; 9 is UI code and was only checked by reading it, because Streamlit could not be installed in the build environment):
+1. "music for working out" matched the *study* rule (`work(ing)?`), giving calm low-energy songs.
+2. "1920s" became 2020: the parser threw away the century of four-digit decades.
+3. A synonym could beat the word the user actually typed ("chill late-night lofi" → mood "moody").
+4. If the model returned `unavailable` as a string, each *letter* became a warning.
+5. `on_topic: "false"` (a string) was treated as on-topic.
+6. `get_client()` crashed the app when an SDK was installed but the API key was missing.
+7. The genre warning counted the diversified list, not the catalog ("only has 1 lofi song" when there were 2 by the same artist).
+8. *(introduced during the rewrite and caught in the second review)* exact catalog labels could be remapped through the synonym table.
+9. The Streamlit app re-ran the agent, and re-called the paid API, on every widget click.
+
+**Simplified:** merged duplicate matchers, made profile validation table-driven, removed an unused field, shorter reliability checks. About 100 fewer lines; the offline evaluation report is byte-identical before and after.

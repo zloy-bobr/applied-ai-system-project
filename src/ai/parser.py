@@ -47,11 +47,11 @@ def parse_with_llm(client: LLMClient, request: str, vocab: CatalogVocab) -> Dict
 
 # phrase -> profile fields it implies. Checked in order; later rules don't overwrite earlier ones.
 ACTIVITY_RULES: List[Tuple[str, Dict[str, Any]]] = [
-    (r"\b(workout|gym|lifting|running|run|cardio|pump(ed)? up)\b",
+    (r"\b(workout|work(ing)? out|gym|lifting|running|run|cardio|pump(ed)? up)\b",
      {"target_energy": 0.92, "desired_mood_tags": ["pump-up", "energetic", "adrenaline"]}),
     (r"\b(party|dance|dancing|club|rave)\b",
      {"target_energy": 0.9, "target_valence": 0.8, "desired_mood_tags": ["energetic", "euphoric"]}),
-    (r"\b(study|studying|homework|focus|concentrate|coding|work(ing)?)\b",
+    (r"\b(study|studying|homework|focus|concentrate|coding|work(ing)?(?! out))\b",
      {"target_energy": 0.38, "target_instrumentalness": 0.85, "desired_mood_tags": ["study", "calm"]}),
     (r"\b(sleep|sleeping|bedtime|wind down|meditat\w*)\b",
      {"target_energy": 0.2, "target_valence": 0.45, "desired_mood_tags": ["calm", "floating"]}),
@@ -83,29 +83,40 @@ def _has(pattern: str, text: str) -> bool:
     return re.search(pattern, text) is not None
 
 
+def _word(phrase: str) -> str:
+    """Regex for phrase as a whole word ('pop' matches in 'pop songs', not 'k-pop' or 'popular')."""
+    return r"(?<![\w-])" + re.escape(phrase) + r"(?![\w-])"
+
+
 def _find_label(text: str, labels: List[str], synonyms: Dict[str, str]) -> Tuple[str, str]:
-    """Return (label, matched_word) for the longest catalog label or synonym found in text."""
-    candidates = [(label, label) for label in labels] + [(target, word) for word, target in synonyms.items()]
-    for target, word in sorted(candidates, key=lambda pair: -len(pair[1])):
-        if _has(r"(?<![\w-])" + re.escape(word) + r"(?![\w-])", text):
-            return target, word
+    """
+    Return (label, matched phrase). Exact catalog labels win over synonyms, so "chill late-night"
+    stays "chill"; within each group the longest phrase wins ("indie pop" over "pop").
+    """
+    exact = {label: label for label in labels}
+    for mapping in (exact, synonyms):
+        for phrase in sorted(mapping, key=len, reverse=True):
+            if _has(_word(phrase), text):
+                return mapping[phrase], phrase
     return "", ""
+
+
+def _first_value(rules: List[Tuple[str, float]], text: str):
+    return next((value for pattern, value in rules if _has(pattern, text)), None)
 
 
 def parse_offline(request: str, vocab: CatalogVocab) -> Dict[str, Any]:
     text = request.lower()
-    raw: Dict[str, Any] = {"desired_mood_tags": []}
+    raw: Dict[str, Any] = {}
+    tags: List[str] = []
 
     genre, genre_word = _find_label(text, vocab.genres, GENRE_SYNONYMS)
-    if genre:
-        raw["favorite_genre"] = genre
-    else:  # genres people ask for that the catalog lacks, so the guardrail can say so
-        missing = re.search(r"\b(k-?pop|j-?pop|country rock|punk|blues|gospel|opera|grunge|salsa|reggaeton)\b", text)
-        if missing:
-            raw["favorite_genre"] = missing.group(1)
+    missing = re.search(r"\b(k-?pop|j-?pop|country rock|punk|blues|gospel|opera|grunge|salsa|reggaeton)\b", text)
+    if genre or missing:  # a genre the catalog lacks is kept so the guardrail can say so
+        raw["favorite_genre"] = genre or missing.group(1)
 
-    # don't let the genre word double as a mood word ("chill lofi" is fine, "pop" isn't a mood)
-    mood_text = text.replace(genre_word, " ") if genre_word else text
+    # don't let the genre word double as a mood word
+    mood_text = re.sub(_word(genre_word), " ", text) if genre_word else text
     mood, _ = _find_label(mood_text, vocab.moods, MOOD_SYNONYMS)
     if mood:
         raw["favorite_mood"] = mood
@@ -114,23 +125,18 @@ def parse_offline(request: str, vocab: CatalogVocab) -> Dict[str, Any]:
         if _has(pattern, text):
             for key, value in fields.items():
                 if key == "desired_mood_tags":
-                    raw["desired_mood_tags"] += [t for t in value if t not in raw["desired_mood_tags"]]
+                    tags += value
                 else:
                     raw.setdefault(key, value)
 
-    for pattern, value in ENERGY_WORDS:
-        if _has(pattern, text):
-            raw.setdefault("target_energy", value)
-            break
-    for pattern, value in VALENCE_WORDS:
-        if _has(pattern, text):
-            raw.setdefault("target_valence", value)
-            break
+    for key, rules in (("target_energy", ENERGY_WORDS), ("target_valence", VALENCE_WORDS)):
+        value = _first_value(rules, text)
+        if value is not None:
+            raw.setdefault(key, value)
 
-    # mood tags named directly ("something nostalgic and warm")
-    for tag in vocab.mood_tags:
-        if _has(r"(?<![\w-])" + re.escape(tag) + r"(?![\w-])", text) and tag not in raw["desired_mood_tags"]:
-            raw["desired_mood_tags"].append(tag)
+    tags += [tag for tag in vocab.mood_tags if _has(_word(tag), text)]  # tags named directly
+    if tags:
+        raw["desired_mood_tags"] = list(dict.fromkeys(tags))
 
     if _has(r"\b(acoustic|unplugged|organic)\b", text):
         raw["likes_acoustic"] = True
@@ -139,22 +145,19 @@ def parse_offline(request: str, vocab: CatalogVocab) -> Dict[str, Any]:
 
     if _has(r"\b(no vocals|without vocals|instrumental|no lyrics|without lyrics)\b", text):
         raw["target_instrumentalness"] = 0.9
-    if _has(r"\b(underground|obscure|hidden gems?|lesser[- ]known)\b", text):
-        raw["target_popularity"] = 30
-    elif _has(r"\b(popular|mainstream|hits?|top 40|famous)\b", text):
-        raw["target_popularity"] = 82
+    popularity = _first_value([(r"\b(underground|obscure|hidden gems?|lesser[- ]known)\b", 30),
+                               (r"\b(popular|mainstream|hits?|top 40|famous)\b", 82)], text)
+    if popularity:
+        raw["target_popularity"] = popularity
 
-    decade = re.search(r"\b(?:19|20)?([0-9]0)'?s\b", text)
+    decade = re.search(r"\b((?:19|20)?[0-9]0)'?s\b", text)  # "1990s", "90s", "90's"
     if decade:
         raw["favorite_decade"] = int(decade.group(1))
 
-    for language in LANGUAGES:
-        if _has(rf"\b{language}\b", text):
-            raw["preferred_language"] = language
-            break
+    language = next((lang for lang in LANGUAGES if _has(rf"\b{lang}\b", text)), None)
+    if language:
+        raw["preferred_language"] = language
 
-    if not raw["desired_mood_tags"]:
-        del raw["desired_mood_tags"]
-    raw["on_topic"] = len(raw) > 0
+    raw["on_topic"] = bool(raw)
     raw["interpretation"] = "Keyword match (offline mode)."
     return raw
