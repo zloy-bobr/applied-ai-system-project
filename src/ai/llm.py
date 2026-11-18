@@ -84,7 +84,7 @@ class GeminiClient:
             from google import genai
         except ImportError as exc:  # pragma: no cover - depends on local install
             raise LLMError("pip install google-genai to use Gemini") from exc
-        self.model = model or os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+        self.model = model or os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
         self.name = f"gemini:{self.model}"
         key = api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
         if not key:
