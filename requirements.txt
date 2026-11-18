@@ -1,3 +1,7 @@
 pandas
 pytest
-streamlit
+streamlit>=1.32
+python-dotenv
+# Pick at least one LLM SDK (the app also runs offline without either):
+anthropic
+google-genai

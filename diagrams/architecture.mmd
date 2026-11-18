@@ -1,75 +1,43 @@
-graph TD
-    %% User Input
-    User["👤 User"]
-    Profile["👤 User Profile<br/>Genre, Mood, Energy"]
-    Context["📍 Context<br/>Time, Activity, Mood"]
+flowchart TD
+    User["👤 User<br/>plain-English request"] --> UI["📱 Streamlit app.py / CLI src/main.py"]
+    UI --> Agent
 
-    %% Input Processing
-    User -->|Provides Preferences| Profile
-    User -->|Current Situation| Context
+    subgraph Agent["🤖 RecommendationAgent (src/ai/agent.py)"]
+        direction TB
+        G["1 · GUARD<br/>empty / too long / injection<br/>(guardrails.py)"]
+        P["2 · PLAN<br/>request → taste profile<br/>LLM, retry once, else offline parser"]
+        V["3 · VALIDATE<br/>map labels to catalog, clamp numbers,<br/>drop invented fields (guardrails.py)"]
+        S["4 · SCORE & RANK<br/>Module 3 score_song / recommend_songs"]
+        C["5 · SELF-CHECK<br/>confidence, artist variety,<br/>missing-genre warnings · refine once"]
+        E["6 · EXPLAIN<br/>LLM writes reasons from scoring facts,<br/>hallucinated titles dropped"]
+        G --> P --> V --> S --> C --> E
+        G -. blocked .-> Out
+        V -. no usable prefs .-> Clarify["🤔 Ask user to clarify"]
+    end
 
-    %% Main Agent
-    Agent["🤖 Recommendation Agent<br/>Multi-Step Reasoning Engine"]
-    Profile -->|Load| Agent
-    Context -->|Analyze| Agent
+    LLM["🧠 LLM provider (Strategy)<br/>Claude · Gemini · offline"] <--> P
+    LLM <--> E
+    Vocab["📚 Catalog vocabulary<br/>genres, moods, tags (catalog.py)"] --> P
+    Vocab --> V
+    Songs[("🎶 data/songs.csv<br/>18 songs")] --> Vocab
+    Songs --> S
 
-    %% Agent Steps
-    Planning["📋 PLANNING<br/>Understand Request"]
-    Reasoning["🧠 REASONING<br/>Analyze Matches"]
-    Scoring["📊 SCORING<br/>Evaluate Songs"]
-    Ranking["🏆 RANKING<br/>Order Results"]
-    Explaining["💬 EXPLAINING<br/>Generate Explanations"]
+    E --> Out["🎵 Top 5 + confidence + explanations<br/>+ warnings + step trace"]
+    Out --> UI
+    Agent --> Log[("📝 logs/agent_runs.jsonl")]
 
-    Agent -->|Step 1| Planning
-    Planning -->|Step 2| Reasoning
-    Reasoning -->|Step 3| Scoring
-    Scoring -->|Step 4| Ranking
-    Ranking -->|Step 5| Explaining
+    subgraph Eval["✅ Evaluation (src/evaluation/)"]
+        Cases[("data/eval_cases.json<br/>15 labeled + 9 edge cases")] --> Harness["run_eval.py"]
+        Harness --> Metrics["Hit@1 · Recall@5 · NDCG@5<br/>vs popularity baseline"]
+        Harness --> Bias["Bias check: coverage,<br/>genre exposure, popularity"]
+        Harness --> Rel["Reliability: guardrails,<br/>consistency"]
+    end
+    Harness --> Agent
+    Tests["🧪 pytest (26 tests, fake LLM)"] --> Agent
 
-    %% Core Components
-    BaseScorer["🎵 Base Recommender<br/>Module 3 - Weighted Scoring<br/>Genre + Mood + Energy + ..."]
-    Songs["🎶 Song Database<br/>18 Songs with Features"]
-
-    Scoring -->|Uses| BaseScorer
-    BaseScorer -->|Scores| Songs
-
-    %% Output
-    Recommendations["🎵 Recommendations<br/>Top 5 Songs"]
-    ReasoningChain["📝 Reasoning Chain<br/>Step-by-step Explanation"]
-    Confidence["📈 Confidence Scores<br/>0-100% per Song"]
-    Trace["📊 Execution Trace<br/>Debug Info"]
-
-    Explaining -->|Generate| Recommendations
-    Explaining -->|Generate| ReasoningChain
-    Explaining -->|Calculate| Confidence
-    Explaining -->|Generate| Trace
-
-    %% Evaluation System
-    Evaluation["✅ Evaluation System"]
-    Metrics["📊 Metrics<br/>Precision, Recall<br/>Diversity, NDCG"]
-    BiasDetector["⚖️ Bias Detector<br/>Genre Bias<br/>Artist Bias<br/>Popularity Bias"]
-    ReliabilityTester["🧪 Reliability Tests<br/>Edge Cases<br/>Robustness<br/>Consistency"]
-
-    Recommendations -->|Evaluate| Evaluation
-    Evaluation -->|Calculate| Metrics
-    Evaluation -->|Analyze| BiasDetector
-    Evaluation -->|Test| ReliabilityTester
-
-    %% Output Display
-    Output["📱 User Interface<br/>Recommendations + Explanations"]
-    Recommendations -->|Display| Output
-    ReasoningChain -->|Display| Output
-    Confidence -->|Display| Output
-
-    %% Styling
-    classDef agent fill:#4CAF50,stroke:#2E7D32,color:#fff,stroke-width:3px
-    classDef component fill:#2196F3,stroke:#1565C0,color:#fff,stroke-width:2px
-    classDef data fill:#FF9800,stroke:#E65100,color:#fff,stroke-width:2px
-    classDef evaluation fill:#9C27B0,stroke:#6A1B9A,color:#fff,stroke-width:2px
-    classDef output fill:#F44336,stroke:#C62828,color:#fff,stroke-width:2px
-
-    class Agent agent
-    class Planning,Reasoning,Scoring,Ranking,Explaining component
-    class BaseScorer,Songs data
-    class Metrics,BiasDetector,ReliabilityTester,Evaluation evaluation
-    class Output,Recommendations,ReasoningChain,Confidence,Trace output
+    classDef ai fill:#4CAF50,stroke:#2E7D32,color:#fff
+    classDef data fill:#FF9800,stroke:#E65100,color:#fff
+    classDef eval fill:#9C27B0,stroke:#6A1B9A,color:#fff
+    class P,E,LLM ai
+    class Songs,Vocab,Cases,Log data
+    class Harness,Metrics,Bias,Rel,Tests eval

@@ -498,3 +498,26 @@ Running the code and reading the actual numbers was always the final check.
 **What surprised me.** Five simple rules and some addition felt like real recommendations. The lofi list looked like a playlist a friend would make. The "reasons" made it feel even smarter, because each song explained itself. But the edge cases showed it doesn't understand music at all. One capital letter was enough to break it. It just follows rules, and those rules work only when the user fits the catalog.
 
 **What I'd try next.** I'd use a bigger, real dataset with measured audio features. I'd let users pick more than one genre. I'd add likes and skips so the profile can learn over time. I'd also add a variety rule so the top 5 doesn't repeat the same artist.  
+
+---
+
+## 10. AI Integration: VibeMatch AI (final project)
+
+> ✏️ *Draft written with my AI assistant from what happened during the build. Rewrite it in your own words before submitting.*
+
+**What changed.** TuneJudge needed a structured profile with exact labels. VibeMatch AI adds an agent in front of it: a language model (Claude or Gemini) turns a plain-English request into a profile, guardrails validate that profile against the real catalog, the original scoring rule ranks the songs, a self-check adds confidence scores, variety and warnings, and the model writes explanations from the scoring facts. Two of my Module 3 "Future Work" items are now built in: one song per artist, and warning the user when a preference can't be met.
+
+**Limitations and biases.**
+- The catalog is still 18 invented songs. Most genres have one song, so for many requests only the top pick is a strong match (average confidence ≈ 0.53).
+- The bias check shows calm, instrumental genres (ambient, jazz) get about 1.7× their fair share of slots because they are the fallback for every "chill" request. Metal, r&b and reggae get about half.
+- The model's understanding of words like "chill" or "sad" comes from its training data, which may reflect mostly Western, English-language listening habits. The catalog vocabulary limits how far that can go, but the mapping from words to numbers (e.g. "sad" → positivity 0.22) is a judgment call.
+- Confidence measures fit to the profile, not whether a person will actually like the song.
+
+**Could it be misused, and how is that prevented?** The realistic risks are prompt injection (trying to make the model ignore its task or leak its prompt), very long inputs that cost money, and the model inventing songs or facts. Requests over 500 characters or empty are blocked before any API call. Injection phrases are flagged and the request is wrapped as data in the prompt. The model's output is never trusted directly: unknown fields are dropped, labels must exist in the catalog, numbers are clamped, and explanations naming songs that weren't recommended are removed. Every run is logged so problems can be reviewed.
+
+**What surprised me in reliability testing.** The evaluation harness found a bug I would not have spotted by hand: "angry metal" put the *sad* folk song Paper Boats in second place, because "angry" only lowered positivity, and so did sadness. Making "angry" also mean high energy fixed it. I was also surprised how harsh an honest confidence score is. Showing "38% match" felt bad, but it is truer than presenting five songs as equally good.
+
+**Collaboration with AI.**
+- *Helpful:* the AI suggested keeping the original scoring rule as the ranker and using the LLM only to translate words into a profile and write explanations. That kept every result explainable and made the system testable with a fake model.
+- *Flawed:* its first template explanations listed the first three scoring reasons, which made a song with acousticness 0.22 sound like a highlight for "acoustic sound". I changed it to list the reasons that earned the most points, and only ones worth at least 0.25.
+- I verified everything by running the tests and the evaluation harness and reading the actual output, not by trusting the description of the change.

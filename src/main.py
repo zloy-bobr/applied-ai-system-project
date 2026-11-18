@@ -1,13 +1,13 @@
 """
-Command line runner for the Music Recommender Simulation.
+Command line runner.
 
-This file helps you quickly run and test your recommender.
-
-You will implement the functions in recommender.py:
-- load_songs
-- score_song
-- recommend_songs
+    python -m src.main                                   # interactive AI chat
+    python -m src.main --ask "chill lofi for studying"   # one request through the AI agent
+    python -m src.main --ask "..." --trace               # also show every agent step
+    python -m src.main --profiles                        # original Module 3 demo (fixed profiles)
+    add --offline to ignore API keys and use the keyword parser
 """
+import argparse
 
 from src.recommender import load_songs, recommend_songs
 
@@ -97,13 +97,71 @@ def print_recommendations(name: str, user_prefs: dict, recommendations: list) ->
         print("-" * 60)
 
 
-def main() -> None:
+def run_profiles() -> None:
+    """Original Module 3 behavior: score the hand-written profiles above."""
     songs = load_songs("data/songs.csv")
     print(f"Loaded songs: {len(songs)}")
 
     for name, user_prefs in PROFILES.items():
         recommendations = recommend_songs(user_prefs, songs, k=5)
         print_recommendations(name, user_prefs, recommendations)
+
+
+def print_agent_result(result, show_trace: bool = False) -> None:
+    print("=" * 64)
+    print(f"Request: {result.request}")
+    print(f"Model:   {result.provider}")
+    if result.clarification:
+        print(f"\n🤔 {result.clarification}")
+    else:
+        if result.interpretation:
+            print(f"Understood as: {result.interpretation}")
+        print(f"Profile: {result.profile}")
+        print(f"Overall match confidence: {result.confidence:.0%}\n")
+        for rank, rec in enumerate(result.recommendations, start=1):
+            song = rec.song
+            print(f"{rank}. {song['title']} by {song['artist']}  [{song['genre']} / {song['mood']}]")
+            print(f"   match {rec.confidence:.0%}  (score {rec.score:.2f})")
+            print(f"   {rec.explanation}")
+        print(f"\n{result.summary}")
+    for warning in result.warnings:
+        print(f"⚠️  {warning}")
+    if show_trace:
+        print("\nAgent trace:")
+        for step in result.trace:
+            ms = f" {step['ms']}ms" if "ms" in step else ""
+            print(f"  [{step['step']}] {step['status']}{ms}: {step['detail']}")
+    print("=" * 64)
+
+
+def main(argv=None) -> None:
+    parser = argparse.ArgumentParser(description="AI music recommender")
+    parser.add_argument("--ask", help="a plain-English music request")
+    parser.add_argument("--trace", action="store_true", help="print each agent step")
+    parser.add_argument("--offline", action="store_true", help="don't call an LLM")
+    parser.add_argument("--profiles", action="store_true", help="run the original Module 3 demo")
+    args = parser.parse_args(argv)
+
+    if args.profiles:
+        run_profiles()
+        return
+
+    from src.ai.agent import RecommendationAgent
+
+    agent = RecommendationAgent(client=None if args.offline else "auto")
+    if args.ask:
+        print_agent_result(agent.run(args.ask), args.trace)
+        return
+
+    print(f"🎵 AI Music Recommender ({agent.provider}). Describe what you want; empty line to quit.")
+    while True:
+        try:
+            request = input("\nYou: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            break
+        if not request:
+            break
+        print_agent_result(agent.run(request), args.trace)
 
 
 if __name__ == "__main__":
