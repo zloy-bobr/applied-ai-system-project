@@ -32,7 +32,7 @@ Full diagrams: [`diagrams/architecture.mmd`](diagrams/architecture.mmd) (include
 
 **How data flows.** The request is checked by guardrails, then the language model turns it into a JSON taste profile using only labels from the catalog. Guardrails validate that profile again, because the model's output is untrusted too, before it reaches the Module 3 scoring rule. The agent turns raw scores into a **confidence** (score ÷ best score possible for that profile), removes duplicate artists, and adds warnings such as "the catalog has no k-pop songs". The model then writes explanations, but only from the scoring reasons it is handed. Explanations that mention songs that weren't recommended are thrown away. Every run, including blocked ones, is appended to a JSONL log.
 
-**Where humans and tests check the AI.** 48 pytest tests use a fake LLM to check every guardrail and fallback path. `src/evaluation/run_eval.py` scores the agent on 15 hand-labeled requests and 10 reliability cases and runs a bias check. The trace shown in the UI lets a person see exactly why each song was chosen.
+**Where humans and tests check the AI.** 53 pytest tests use a fake LLM to check every guardrail and fallback path, and 5 of them drive the Streamlit app itself with Streamlit's AppTest. `src/evaluation/run_eval.py` scores the agent on 15 hand-labeled requests and 10 reliability cases and runs a bias check. The trace shown in the UI lets a person see exactly why each song was chosen.
 
 | Folder / file | Role |
 |---|---|
@@ -79,7 +79,7 @@ Full diagrams: [`diagrams/architecture.mmd`](diagrams/architecture.mmd) (include
 5. Test and evaluate:
 
    ```bash
-   pytest                                        # 48 tests, no API key needed
+   pytest                                        # 53 tests, no API key needed
    python -m src.evaluation.run_eval --offline   # reproducible evaluation report
    python -m src.evaluation.run_eval --save      # with your LLM; writes reports/evaluation_report.md
    ```
@@ -151,7 +151,7 @@ Here the self-check caught that *Midnight Coding* and *Focus Flow* are both by L
 
 ## Testing summary
 
-**40 / 48 pytest tests pass** (6 original Module 3 tests + 34 new, including regression tests for every bug found in code review and debugging). A `FakeLLM` replays canned replies, including errors, so the tests cover the LLM path, retry, fallback, hallucination filtering, injection flagging and logging without network access.
+**53 / 53 pytest tests pass** (6 original Module 3 tests + 47 new, 5 that run the Streamlit app in offline mode, and regression tests for every bug found in code review and debugging). A `FakeLLM` replays canned replies, including errors, so the tests cover the LLM path, retry, fallback, hallucination filtering, injection flagging and logging without network access.
 
 **Evaluation harness** (`python -m src.evaluation.run_eval --offline`, full report in [`reports/evaluation_report.md`](reports/evaluation_report.md)):
 
