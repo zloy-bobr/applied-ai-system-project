@@ -1,0 +1,7 @@
+# VibeMatch AI theme: makes Streamlit's own widgets match the dark design in app.py.
+[theme]
+base = "dark"
+primaryColor = "#8B5CF6"
+backgroundColor = "#0F1419"
+secondaryBackgroundColor = "#1A1F2E"
+textColor = "#F8F7FF"

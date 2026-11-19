@@ -40,8 +40,8 @@ def test_search_button_shows_five_songs(app):
     app.button(key="search_button").click().run()
     assert not app.exception
     assert "Your picks" in [h.value for h in app.subheader]
-    assert "**1. Midnight Coding**" in page_text(app)
-    assert len([m for m in app.metric if m.label == "Match"]) == 5
+    assert "1. Midnight Coding</h3>" in page_text(app)
+    assert page_text(app).count("Match confidence") == 5  # one confidence bar per song
 
 
 def test_example_pill_runs_search_and_fills_box(app):
@@ -49,7 +49,7 @@ def test_example_pill_runs_search_and_fills_box(app):
     assert not app.exception
     assert app.text_input(key="draft").value == "something heavy and aggressive for the gym"
     assert app.pills(key="example").value is None  # pills act like buttons
-    assert "**1. Gym Hero**" in page_text(app)
+    assert "1. Gym Hero</h3>" in page_text(app)
 
 
 def test_missing_genre_shows_warning(app):
