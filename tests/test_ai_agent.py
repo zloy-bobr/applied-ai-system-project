@@ -140,7 +140,7 @@ def test_agent_retries_then_falls_back_to_offline_parser():
     assert result.recommendations[0].song["genre"] == "lofi"
     assert any("unavailable" in w for w in result.warnings)
     failed = [s for s in result.trace if "failed" in s["status"]]
-    assert len(failed) == 3  # 2 plan attempts + explain
+    assert len(failed) == 2  # 2 plan attempts; the explanation call is skipped once the model failed
 
 
 def test_agent_asks_for_clarification_when_nothing_usable():
@@ -398,7 +398,7 @@ def test_timeout_is_not_retried_and_skips_explanations():
     llm = FakeLLM(LLMTimeout("Gemini did not answer within 25 s"), {"on_topic": True})
     result = make_agent(llm).run("something heavy and aggressive for the gym")
     assert len(llm.calls) == 1  # no retry, no explanation call
-    assert result.model_timed_out and len(result.recommendations) == 5
+    assert result.model_failed and len(result.recommendations) == 5
     assert any("took too long" in w for w in result.warnings)
 
 
@@ -414,3 +414,23 @@ def test_unexpected_error_is_reported_and_logged(tmp_path, monkeypatch):
     assert result.clarification and not result.recommendations
     assert any("KeyError" in w for w in result.warnings)
     assert json.loads(path.read_text())["trace"][-1]["step"] == "error"
+
+
+def test_overloaded_model_gets_a_clear_warning_and_no_explanation_call():
+    overloaded = LLMError("Gemini request failed: 503 UNAVAILABLE. This model is currently experiencing high demand.")
+    llm = FakeLLM(overloaded, overloaded, {"summary": "should not be requested"})
+    llm.name = "gemini:gemini-test"
+    result = make_agent(llm).run("something heavy and aggressive for the gym")
+    assert len(llm.calls) == 2  # plan + one retry, then no explanation call
+    assert len(result.recommendations) == 5
+    assert any(w.startswith("Gemini is overloaded right now") for w in result.warnings)
+
+
+def test_explain_failure_reasons():
+    from src.ai.llm import LLMTimeout, explain_failure
+
+    assert explain_failure(LLMTimeout("x")) == "took too long to answer"
+    assert "rate limit" in explain_failure(LLMError("429 RESOURCE_EXHAUSTED"))
+    assert "API key" in explain_failure(LLMError("400 API key not valid"))
+    assert "model name" in explain_failure(LLMError("404 NOT_FOUND"))
+    assert explain_failure(LLMError("something else")) == "was unavailable"

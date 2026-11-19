@@ -34,6 +34,22 @@ def llm_timeout() -> float:
         return 25.0
 
 
+def explain_failure(error: Exception) -> str:
+    """A plain-English reason for a failed model call, for the warning shown to the user."""
+    if isinstance(error, LLMTimeout):
+        return "took too long to answer"
+    text = str(error).lower()
+    if any(k in text for k in ("503", "unavailable", "high demand", "overloaded", "529")):
+        return "is overloaded right now (a temporary problem on the provider's side; try again in a few minutes)"
+    if any(k in text for k in ("429", "resource_exhausted", "rate limit", "quota")):
+        return "hit its rate limit or free quota (wait a minute and try again)"
+    if any(k in text for k in ("401", "403", "api key", "api_key", "permission")):
+        return "rejected the API key (check the key in your .env file)"
+    if "404" in text or "not_found" in text:
+        return "could not find the model name (check GEMINI_MODEL or CLAUDE_MODEL)"
+    return "was unavailable"
+
+
 def _wrap(provider: str, exc: Exception) -> LLMError:
     """Turn an SDK exception into LLMError, or LLMTimeout when it was a timeout."""
     text = f"{type(exc).__name__} {exc}".lower()

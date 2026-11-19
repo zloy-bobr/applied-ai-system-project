@@ -19,7 +19,7 @@ from src.ai.catalog import CatalogVocab
 from src.ai.guardrails import (
     INJECTION_WARNING, GuardrailError, check_explanations, check_request, sanitize_profile, to_bool,
 )
-from src.ai.llm import LLMClient, LLMError, LLMTimeout, get_client
+from src.ai.llm import LLMClient, LLMError, LLMTimeout, explain_failure, get_client
 from src.ai.logger import log_run
 from src.ai.parser import parse_offline, parse_with_llm
 from src.core.recommender import load_songs, recommend_songs
@@ -80,7 +80,7 @@ class AgentResult:
     warnings: List[str] = field(default_factory=list)
     clarification: Optional[str] = None  # set when we need more info instead of recommending
     blocked: bool = False
-    model_timed_out: bool = False  # set when the model didn't answer in time; skips the second call
+    model_failed: bool = False  # the model failed while planning, so the explanation call is skipped
     trace: List[Dict[str, Any]] = field(default_factory=list)
 
     def step(self, name: str, status: str, detail: Dict[str, Any], start: Optional[float] = None) -> None:
@@ -182,14 +182,14 @@ class RecommendationAgent:
                 try:
                     return parse_with_llm(self.client, result.request, self.vocab), f"llm ({self.provider})"
                 except LLMError as exc:
+                    error = exc
                     result.step("plan", f"llm attempt {attempt} failed", {"error": str(exc)})
                     if isinstance(exc, LLMTimeout):  # retrying a timeout would just wait again
-                        result.model_timed_out = True
                         break
-            result.warnings.append(
-                "The AI model took too long, so a simpler keyword parser was used."
-                if result.model_timed_out else
-                "The AI model was unavailable, so a simpler keyword parser was used.")
+            # The explanation call would almost certainly fail the same way, so skip it too.
+            result.model_failed = True
+            model = self.provider.split(":")[0].capitalize()
+            result.warnings.append(f"{model} {explain_failure(error)}, so a simpler keyword parser was used.")
         return parse_offline(result.request, self.vocab), "offline keyword parser"
 
     def _self_check(self, candidates: List[Recommendation], result: AgentResult) -> Dict[str, Any]:
@@ -243,7 +243,7 @@ class RecommendationAgent:
         recs = result.recommendations
         explanations: Dict[str, str] = {}
         source = "template"
-        if self.client and self.ai_explanations and not result.model_timed_out:
+        if self.client and self.ai_explanations and not result.model_failed:
             facts = "\n".join(
                 f"- {r.song['title']} by {r.song['artist']} ({r.song['genre']}, {r.song['mood']}, "
                 f"energy {r.song['energy']}, tags {', '.join(r.song.get('mood_tags', []))}): "
